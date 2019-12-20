@@ -1,0 +1,45 @@
+data a, b, c, d, x1, x2;
+
+linear() {
+    if (b == 0) {
+        if (c == 0) {
+            return inf();
+        }
+        return nosol();
+    }
+    return -(c / b);
+}
+
+nosol() {
+    return -42;
+}
+
+inf() {
+    return 42;
+}
+
+discr() {
+    return ((b * b) - ((4 * a) * c);
+}
+
+
+main() {
+    in a, b, c;
+    if (a == 0) {
+        out linear();
+    }
+    if (0 < a) {
+        d = sqrt(discr());
+        if (d < 0) {
+            out nosol();
+        }
+        x1 = ((-b) + d) / (2 * a);
+        x2 = ((-b) - d) / (2 * a);
+        if (d == 0) {
+            out x1;
+        }
+        if (0 < d) {
+            out x1, x2;
+        }
+    }
+}

@@ -1,6 +1,7 @@
 #include <iostream>
 #include <cstdlib>
 #include <cstring>
+#include <utility>
 #include <vector>
 #include <cctype>
 #include <set>
@@ -10,16 +11,14 @@
 #include <fstream>
 #include <sstream>
 
-///                 G - General, F - function, A - agruments, I - ID, V - variable, S - statement, E - exprssion
-///                 G := F* | data A
-///                 F := I(A)S | I()S
-///                 A := I{,I}* | NONE
-///                 S := {S+} | ["if", "while"]ES | "return"E; | "data"V+ | ["in", "out"] A; | E;
-///                 V := I=E,V | I,V | I; | I=E;
-///                 E := N | STR | I | (E) | I(C) | I() | E [+-<>] E | I = E
-///                 N := [0-9]+
-///                 STR := [a-zA-Z]
-///                 C := E,C | E
+///                 <general> ::= <function>* | "data" <arguments>
+///                 <function> := <identificator>(<arguments>)<statement>
+///                 <arguments> := <identificator>{,<identificator>}* | NONE
+///                 <statement> := {<statement>+} | ["if", "while"]<expression><statement> | "return"<expression>>; | "in"<arguments>; | "out"<expression-list>; | <expression>;
+///                 <expression-list> := <expression>{,<expression-list>}* | NONE
+///                 <expression> := <number> | <identificator> | (<expression>) | -<expression> | <identificator>(<expression-list>) || <expression> [+-<>] <expression> | <identificator> = <expression>
+///                 <number> := [0-9]+
+
 
 
 #define ANSI_COLOR_RED     "\x1b[31m"
@@ -32,22 +31,31 @@ public:
 
 
     enum class ErrorCode {
-        NO_ERROR = 0,
-        G_ERROR  = 1,
-        N_ERROR  = 2,
-        E_ERROR  = 3,
-        P_ERROR = 4
+        NO_ERROR        = 0,
+        FUNCTION_ERROR  = 1,
+        ARGUMENT_ERROR  = 2,
+        STATEMENT_ERROR = 3,
+        DATA_ERROR      = 4
     };
 
     enum class TokenType {
-        NULL_TYPE = 0,
-        KEYWORD = 1,
-        SEPARATOR = 2,
-        OPERATOR = 3,
+        NULL_TYPE       = 0,
+        KEYWORD         = 1,
+        SEPARATOR       = 2,
+        OPERATOR        = 3,
         INTEGER_LITERAL = 4,
-        STRING_LITERAL = 5,
-        IDENTIFICATOR = 6,
-        FUNCTION = 7
+        STRING_LITERAL  = 5,
+        IDENTIFICATOR   = 6,
+        FUNCTION        = 7
+    };
+
+    enum class Keyword {
+        RETURN  = 0,
+        IF      = 1,
+        WHILE   = 2,
+        DATA    = 3,
+        IN      = 4,
+        OUT     = 5
     };
 
     struct Node {
@@ -57,7 +65,7 @@ public:
         TokenType type;
         Node() = default;
 
-        explicit Node(const std::string &s, TokenType type = TokenType::NULL_TYPE) : data(s), children(), num(0), type(type) {}
+        explicit Node(std::string s, TokenType type = TokenType::NULL_TYPE) : data(std::move(s)), children(), num(0), type(type) {}
     };
 
     struct Lexeme {
@@ -71,13 +79,13 @@ public:
     };
 
 
-    Parser(const std::string& text) : ptr(0), err_code(ErrorCode::NO_ERROR), text(text), root(nullptr) {
-        token_type["return"] = TokenType::KEYWORD;
-        token_type["if"]     = TokenType::KEYWORD;
-        token_type["while"]  = TokenType::KEYWORD;
-        token_type["data"]   = TokenType::KEYWORD;
-        token_type["in"]     = TokenType::KEYWORD;
-        token_type["out"]    = TokenType::KEYWORD;
+    Parser(std::string  text) : ptr(0), err_code(ErrorCode::NO_ERROR), text(std::move(text)), root(nullptr) {
+        keywords["return"] = Keyword::RETURN;
+        keywords["if"]     = Keyword::IF;
+        keywords["while"]  = Keyword::WHILE;
+        keywords["data"]   = Keyword::DATA;
+        keywords["in"]     = Keyword::IN;
+        keywords["out"]    = Keyword::OUT;
     }
 
     size_t ptr;
@@ -85,8 +93,7 @@ public:
     size_t exp_cnt = 0;
     ErrorCode err_code;
     Node* root;
-    Node* curr_node;
-    std::map<std::string, TokenType> token_type;
+    std::map<std::string, Keyword> keywords;
     std::map<std::string, int> CHAR_TABLE;
     std::vector<Token> tokens;
     std::string text;
@@ -99,17 +106,23 @@ public:
         ptr = 0;
         root = new Node("ROOT");
         while (tokens[ptr].type != TokenType::NULL_TYPE) {
-            if (!strncmp(tokens[ptr].lexeme.start, "data", 4)) {
-                ptr++;
-                root->children.push_back(get_V());
+            if (tokens[ptr].type == TokenType::KEYWORD) {
+                Keyword current_keyword = keywords[std::string(tokens[ptr].lexeme.start, tokens[ptr].lexeme.size)];
+                if (current_keyword == Keyword::DATA) {
+                    ptr++;
+                    root->children.push_back(get_data());
+                } else {
+                    err_code = ErrorCode::DATA_ERROR;
+                    raise_syntax_error();
+                }
             }
             else {
-                root->children.push_back(get_F());
+                root->children.push_back(get_function());
             }
         }
     }
 
-    Node* get_I() {
+    Node* get_identificator() {
         if (tokens[ptr].type == TokenType::IDENTIFICATOR) {
             Node* result = new Node(std::string(tokens[ptr].lexeme.start, tokens[ptr].lexeme.size), TokenType::IDENTIFICATOR);
             ptr++;
@@ -120,197 +133,205 @@ public:
         }
     }
 
-    Node* get_A() {
+    Node* get_arguments() {
         Node* result = new Node("ARG");
-        result->children.push_back(get_I());
+        Node* first_arg = get_identificator();
+        if (first_arg) {
+            result->children.push_back(first_arg);
+        }
         while (*tokens[ptr].lexeme.start == ',') {
             ptr++;
-            result->children.push_back(get_I());
+            result->children.push_back(get_identificator());
         }
         return result;
     }
 
 
 
-    Node* get_F() {
-        Node *result = get_I();
+    Node* get_function() {
+        Node *result = get_identificator();
         if (*tokens[ptr].lexeme.start == '(') {
             ptr++;
-            if (*tokens[ptr].lexeme.start == ')') {
-                result->children.push_back(new Node("ARG"));
-            } else {
-                result->children.push_back(get_A());
-            }
+            result->children.push_back(get_arguments());
+        } else {
+            err_code = ErrorCode::FUNCTION_ERROR;
+            raise_syntax_error();
         }
         if (*tokens[ptr].lexeme.start == ')') {
             ptr++;
+        } else {
+            err_code = ErrorCode::FUNCTION_ERROR;
+            raise_syntax_error();
         }
 
         result->children.push_back(new Node("STAT"));
-        result->children[1]->children.push_back(get_S());
+        result->children[1]->children.push_back(get_statement());
         result->type = TokenType::FUNCTION;
         return result;
     }
 
-    Node* get_S() {
+    Node* get_statement() {
         Node* result = nullptr;
         if (*(tokens[ptr].lexeme.start) == '{') {
             result = new Node("COMPOUND");
             ptr++;
             while (*tokens[ptr].lexeme.start != '}') {
-                result->children.push_back(get_S());
+                result->children.push_back(get_statement());
             }
             ptr++;
         }
-        else if (tokens[ptr] .type == TokenType::KEYWORD) {
-            if (!strncmp(tokens[ptr].lexeme.start, "if", 2)) {
-                result = new Node("IF", TokenType::KEYWORD);
-                ptr++;
-                result->children.push_back(get_E());
-                result->children.push_back(get_S());
-            }
-            else if (!strncmp(tokens[ptr].lexeme.start, "while", 5)) {
-                result = new Node("WHILE", TokenType::KEYWORD);
-                ptr++;
-                if (*tokens[ptr].lexeme.start == '(') {
-                    result->children.push_back(get_E());
-                }
-                if (*tokens[ptr].lexeme.start == ')') {
-                    ptr++;
-                }
-                result->children.push_back(get_S());
-            }
-            else if (!strncmp(tokens[ptr].lexeme.start, "return", 6)) {
-                result = new Node("RETURN", TokenType::KEYWORD);
-                ptr++;
-                result->children.push_back(get_E());
-                if (*tokens[ptr].lexeme.start == ';') {
-                    ptr++;
-                }
-            }
-            else if (!strncmp(tokens[ptr].lexeme.start, "return", 6)) {
-                result = new Node("RETURN", TokenType::KEYWORD);
-                ptr++;
-                result->children.push_back(get_E());
-                if (*tokens[ptr].lexeme.start == ';') {
-                    ptr++;
-                }
-            }
-            else if (!strncmp(tokens[ptr].lexeme.start, "in", 2)) {
-                result = new Node("IN", TokenType::KEYWORD);
-                ptr++;
-                result->children.push_back(get_A());
-                if (*tokens[ptr].lexeme.start == ';') {
-                    ptr++;
-                }
-            }
-            else if (!strncmp(tokens[ptr].lexeme.start, "out", 2)) {
-                result = new Node("OUT", TokenType::KEYWORD);
-                ptr++;
-                result->children.push_back(get_C());
-                if (*tokens[ptr].lexeme.start == ';') {
-                    ptr++;
+        else if (tokens[ptr].type == TokenType::KEYWORD) {
+            if (keywords.contains(std::string(tokens[ptr].lexeme.start, tokens[ptr].lexeme.size))) {
+                Keyword current_keyword = keywords[std::string(tokens[ptr].lexeme.start, tokens[ptr].lexeme.size)];
+                switch (current_keyword) {
+                    case Keyword::IF:
+                        result = new Node("IF", TokenType::KEYWORD);
+                        ptr++;
+                        result->children.push_back(get_expression());
+                        result->children.push_back(get_statement());
+                        break;
+                    case Keyword::WHILE:
+                        result = new Node("WHILE", TokenType::KEYWORD);
+                        ptr++;
+                        result->children.push_back(get_expression());
+                        result->children.push_back(get_statement());
+                        break;
+                    case Keyword::RETURN:
+                        result = new Node("RETURN", TokenType::KEYWORD);
+                        ptr++;
+                        result->children.push_back(get_expression());
+                        if (*tokens[ptr].lexeme.start == ';') {
+                            ptr++;
+                        } else {
+                            err_code = ErrorCode::STATEMENT_ERROR;
+                            raise_syntax_error();
+                        }
+                        break;
+                    case Keyword::IN:
+                        result = new Node("IN", TokenType::KEYWORD);
+                        ptr++;
+                        result->children.push_back(get_arguments());
+                        if (*tokens[ptr].lexeme.start == ';') {
+                            ptr++;
+                        } else {
+                            err_code = ErrorCode::STATEMENT_ERROR;
+                            raise_syntax_error();
+                        }
+                        break;
+                    case Keyword::OUT:
+                        result = new Node("OUT", TokenType::KEYWORD);
+                        ptr++;
+                        result->children.push_back(get_expression_list());
+                        if (*tokens[ptr].lexeme.start == ';') {
+                            ptr++;
+                        } else {
+                            err_code = ErrorCode::STATEMENT_ERROR;
+                            raise_syntax_error();
+                        }
+                        break;
+                    case Keyword::DATA:
+                        ptr++;
+                        result = get_data();
+                        break;
+
                 }
             }
         }
+
         else {
-            result = get_E();
+            result = get_expression();
             if (*tokens[ptr].lexeme.start == ';') {
                 ptr++;
+            } else {
+                err_code = ErrorCode::STATEMENT_ERROR;
+                raise_syntax_error();
             }
         }
         return result;
     }
 
-    Node* get_V() {
+    Node* get_data() {
         Node* result = new Node("DATA");
-        while (*tokens[ptr].lexeme.start != ';') {
-            result->children.push_back(get_I());
+        Node* current_id;
+        while (current_id = get_identificator()) {
+            result->children.push_back(current_id);
             if (*tokens[ptr].lexeme.start == ',') {
                 ptr++;
             }
         }
-        ptr++;
+        if (*tokens[ptr].lexeme.start == ';') {
+            ptr++;
+        } else {
+            err_code = ErrorCode::DATA_ERROR;
+            raise_syntax_error();
+        }
         return result;
     }
 
-    Node* get_C() {
+    Node* get_expression_list() {
         Node* result = new Node("ARG");
-        result->children.push_back(get_E());
+        Node* first_expr = get_expression();
+        if (first_expr) {
+            result->children.push_back(first_expr);
+        }
         while (*tokens[ptr].lexeme.start == ',') {
             ptr++;
-            result->children.push_back(get_E());
+            result->children.push_back(get_expression());
         }
-        ptr++;
         return result;
-
     }
 
-    Node* get_E() {
+    Node* get_expression() {
         Node* result = nullptr;
-        result = get_N();
-        if (!result) {
-            result = get_STR();
-            if (!result) {
-                result = get_I();
-                if (result) {
-                    if (*tokens[ptr].lexeme.start == '(') {
-                        ptr++;
-                        if (*tokens[ptr].lexeme.start == ')') {
-                            result->children.push_back(new Node("ARG"));
-                        } else {
-                            result->children.push_back(get_A());
-                        }
-                        if (*tokens[ptr].lexeme.start == ')') {
-                            ptr++;
-                        }
+        if (*tokens[ptr].lexeme.start == '-') {
+            result = new Node(std::string(tokens[ptr].lexeme.start, tokens[ptr].lexeme.size), TokenType::OPERATOR);
+            ptr += 1;
+            result->children.push_back(get_expression());
+            return result;
+        }
+        if (!(result = get_number())) {
+            if ((result = get_identificator()) || !strncmp(tokens[ptr].lexeme.start, "sqrt", 4)) {
+                if (*tokens[ptr].lexeme.start == '(') {
+                    if (!strncmp(tokens[ptr].lexeme.start, "sqrt", 4)) {
+                        result = new Node("sqrt");
                     }
-                    else if (*tokens[ptr].lexeme.start == '=') {
-                        Node* tmp = result;
-                        result = new Node(std::string(tokens[ptr].lexeme.start, tokens[ptr].lexeme.size), TokenType::OPERATOR);
+                    ptr++;
+                    result->children.push_back(get_expression_list());
+                    if (*tokens[ptr].lexeme.start == ')') {
                         ptr++;
-                        result->children.push_back(tmp);
-                        result->children.push_back(get_E());
-                        return result;
                     }
                 }
-            }
-            if ( *tokens[ptr].lexeme.start == '(') {
-                ptr++;
-                result = get_E();
-                if ( *tokens[ptr].lexeme.start == ')') {
+                else if (*tokens[ptr].lexeme.start == '=') {
+                    Node* tmp = result;
+                    result = new Node(std::string(tokens[ptr].lexeme.start, tokens[ptr].lexeme.size), TokenType::OPERATOR);
                     ptr++;
+                    result->children.push_back(tmp);
+                    result->children.push_back(get_expression());
+                    return result;
                 }
             }
         }
-        if ((tokens[ptr].lexeme.size == 1 && ( *tokens[ptr].lexeme.start == '-' || *tokens[ptr].lexeme.start == '/'|| *tokens[ptr].lexeme.start == '+' ||
-            *tokens[ptr].lexeme.start == '*' || *tokens[ptr].lexeme.start == '<' || *tokens[ptr].lexeme.start == '>')) ||
-            (tokens[ptr].lexeme.size == 2 && (!strncmp(tokens[ptr].lexeme.start, "!=", tokens[ptr].lexeme.size) ||
-            !strncmp(tokens[ptr].lexeme.start, "==", tokens[ptr].lexeme.size)))) {
+        if ( *tokens[ptr].lexeme.start == '(') {
+            ptr++;
+            result = get_expression();
+            if ( *tokens[ptr].lexeme.start == ')') {
+                ptr++;
+            }
+        }
+        if (tokens[ptr].type == TokenType::OPERATOR) {
             Node* tmp = result;
             result = new Node(std::string(tokens[ptr].lexeme.start, tokens[ptr].lexeme.size), TokenType::OPERATOR);
             ptr += 1;
             result->children.push_back(tmp);
-            result->children.push_back(get_E());
+            result->children.push_back(get_expression());
         }
         return result;
     }
 
 
-    Node* get_N() {
+    Node* get_number() {
         if (tokens[ptr].type == TokenType::INTEGER_LITERAL) {
             Node * result = new Node(std::string(tokens[ptr].lexeme.start, tokens[ptr].lexeme.size), TokenType::INTEGER_LITERAL);
-            ptr++;
-            return result;
-        }
-        else {
-            return nullptr;
-        }
-    }
-
-    Node* get_STR() {
-        if (tokens[ptr].type == TokenType::STRING_LITERAL) {
-            Node * result = new Node(std::string(tokens[ptr].lexeme.start, tokens[ptr].lexeme.size), TokenType::STRING_LITERAL);
             ptr++;
             return result;
         }
@@ -420,8 +441,14 @@ public:
                 fprintf(file, "pushr r%d\n", CHAR_TABLE[node->data]);
             }
             else {
-                fprintf(file, "call %s\n", node->data.c_str());
-                // TODO add arguments
+                if (node->data == "sqrt") {
+                    evaluate(node->children[0], file);
+                    fprintf(file, "sqrt\n");
+                } else {
+                    fprintf(file, "call %s\n", node->data.c_str());
+                    // TODO add arguments
+                }
+
             }
         }
         else if (node->type == TokenType::INTEGER_LITERAL) {
@@ -450,7 +477,12 @@ public:
                     fprintf(file, "add\n");
                 }
                 if (node->data == "-") {
-                    fprintf(file, "sub\n");
+                    if (node->children.size() == 1) {
+                        fprintf(file, "push -1\n"
+                                      "mul\n");
+                    } else {
+                        fprintf(file, "sub\n");
+                    }
                 }
                 if (node->data == "*") {
                     fprintf(file, "mul\n");
@@ -472,6 +504,9 @@ public:
             }
         }
         else if (node->data == "ARG") {
+            for (auto& j : node->children) {
+                evaluate(j, file);
+            }
             return;
         }
         else if (node->type == TokenType::KEYWORD) {
@@ -491,10 +526,8 @@ public:
             else if (node->data == "IF") {
                 int cur_cnt = exp_cnt++;
                 evaluate(node->children[0], file);
-                fprintf(file, "popr r999\n"
-                              "push 0\n"
-                              "popr r1000\n"
-                              "cmp r999, r1000\n"
+                fprintf(file, "push 0\n"
+                              "cmptop\n"
                               "je notif%d\n", cur_cnt);
                 evaluate(node->children[1], file);
                 fprintf(file, "$notif%d\n", cur_cnt);
@@ -524,10 +557,10 @@ public:
 void Parser::ERROR_INFO() {
     switch (err_code) {
         PRINTF_ERR_DESCR(ErrorCode::NO_ERROR, "No error.")
-        PRINTF_ERR_DESCR(ErrorCode::G_ERROR,  "G failed to parse.")
-        PRINTF_ERR_DESCR(ErrorCode::E_ERROR,  "E failed to parse.")
-        PRINTF_ERR_DESCR(ErrorCode::N_ERROR,  "N failed to parse.")
-        PRINTF_ERR_DESCR(ErrorCode::P_ERROR,  "P failed to parse.")
+        PRINTF_ERR_DESCR(ErrorCode::DATA_ERROR,  "Failed to parse DATA.")
+        PRINTF_ERR_DESCR(ErrorCode::STATEMENT_ERROR,  "Failed to parse STATEMENT.")
+        PRINTF_ERR_DESCR(ErrorCode::FUNCTION_ERROR,  "Failed to parse FUNCTION.")
+        PRINTF_ERR_DESCR(ErrorCode::ARGUMENT_ERROR,  "Failed to parse ARGUMENTS.")
     }
 }
 
@@ -535,7 +568,7 @@ void Parser::ERROR_INFO() {
 void Parser::raise_syntax_error() {
     printf(ANSI_COLOR_RED "Syntax Error at position %zu, lexeme \'%.*s\'.\n" ANSI_COLOR_RESET, ptr, tokens[ptr].lexeme.size, tokens[ptr].lexeme.start);
     ERROR_INFO();
-    exit(0);
+    exit(1);
 }
 
 
@@ -586,7 +619,7 @@ void Parser::separate_tokens() {
 }
 
 bool Parser::is_separator(char c) {
-    return c == ',' || c == '(' || c == ')' || c == '{' || c == '}' || c == ';' || c == '>' || c == '<';
+    return c == ',' || c == '(' || c == ')' || c == '{' || c == '}' || c == ';';
 }
 
 bool Parser::is_operator(char c) {
@@ -600,10 +633,10 @@ bool Parser::is_compound(const char *c) {
 
 Parser::TokenType Parser::classify_word(const char *start, size_t size) {
     TokenType type = TokenType::NULL_TYPE;
-    try {
-        type = token_type.at(std::string(start, size));
+    if (keywords.contains(std::string(start, size))) {
+        type = TokenType::KEYWORD;
     }
-    catch (const std::out_of_range& e) {
+    else {
         if (isdigit(*start)) {
             type = TokenType::INTEGER_LITERAL;
         }
@@ -633,11 +666,10 @@ void Parser::load_word(const char *&start, size_t &size, bool &status, int shift
 
 
 int main() {
-    std::ifstream t("while.:)");
+    std::ifstream t("quadratic.:)");
     std::stringstream buffer;
     buffer << t.rdbuf();
     Parser parser(buffer.str());
-    int * a = nullptr;
     parser.separate_tokens();
     parser.build_AST();
     parser.create_char_table();
