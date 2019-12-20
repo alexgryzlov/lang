@@ -14,7 +14,7 @@
 ///                 <general> ::= <function>* | "data" <arguments>
 ///                 <function> := <identificator>(<arguments>)<statement>
 ///                 <arguments> := <identificator>{,<identificator>}* | NONE
-///                 <statement> := {<statement>+} | ["if", "while"]<expression><statement> | "return"<expression>>; | "in"<arguments>; | "out"<expression-list>; | <expression>;
+///                 <statement> := '{'<statement>+'}' | ["if", "while"]<expression><statement> | "return"<expression>>; | "in"<arguments>; | "out"<expression-list>; | <expression>;
 ///                 <expression-list> := <expression>{,<expression-list>}* | NONE
 ///                 <expression> := <number> | <identificator> | (<expression>) | -<expression> | <identificator>(<expression-list>) || <expression> [+-<>] <expression> | <identificator> = <expression>
 ///                 <number> := [0-9]+
@@ -88,13 +88,16 @@ public:
         keywords["out"]    = Keyword::OUT;
     }
 
-    size_t ptr;
-    size_t cnt = 0;
-    size_t exp_cnt = 0;
+   int ptr;
+   int cnt = 0;
+   int exp_cnt = 0;
+   int global_var = 0;
+   int max_var = 0;
+   int return_reg = 101;
     ErrorCode err_code;
     Node* root;
     std::map<std::string, Keyword> keywords;
-    std::map<std::string, int> CHAR_TABLE;
+    std::map<std::string, std::map<std::string, int>> CHAR_TABLES;
     std::vector<Token> tokens;
     std::string text;
 
@@ -251,7 +254,7 @@ public:
     }
 
     Node* get_data() {
-        Node* result = new Node("DATA");
+        Node* result = new Node("data", TokenType::KEYWORD);
         Node* current_id;
         while (current_id = get_identificator()) {
             result->children.push_back(current_id);
@@ -387,43 +390,88 @@ public:
         }
     }
 
-    // TODO: local namespaces
     void create_char_table() {
         int f_cnt = 0;
-        for (auto& i : root->children) {
-            if (i->data == "DATA") {
-                int var_cnt = 0;
-                for (auto& j : i->children) {
-                    CHAR_TABLE[j->data] = var_cnt++;
-                }
+        int data_index = -1;
+        // Create all functions
+        for (size_t i = 0; i < root->children.size(); ++i) {
+            if (root->children[i]->type == TokenType::KEYWORD) {
+                data_index = i;
                 continue;
             }
-            CHAR_TABLE[i->data] = f_cnt++;
+            CHAR_TABLES[root->children[i]->data];
+        }
+        if (data_index != -1) {
+            global_var = root->children[data_index]->children.size();
+            for (size_t i = 0; i < root->children[data_index]->children.size(); ++i) {
+                for (size_t j = 0; j < root->children.size(); ++j) {
+                    if (j == data_index) {
+                        continue;
+                    }
+                    CHAR_TABLES[root->children[j]->data][root->children[data_index]->children[i]->data] = i;
+                }
+            }
+        }
+        for (size_t i = 0; i < root->children.size(); ++i) {
+            if (i == data_index) {
+                continue;
+            }
+            for (size_t j = 0; j < root->children[i]->children[0]->children.size(); ++j) {
+                CHAR_TABLES[root->children[i]->data][root->children[i]->children[0]->children[j]->data] = CHAR_TABLES[root->children[i]->data].size();
+            }
+        }
+        for (size_t i = 0; i < root->children.size(); ++i) {
+            if (i == data_index) {
+                continue;
+            }
+            add_local_vars(root->children[i], root->children[i]->data);
+        }
+        for (size_t i = 0; i < root->children.size(); ++i) {
+            if (i == data_index) {
+                continue;
+            }
+            if (CHAR_TABLES[root->children[i]->data].size() > max_var) {
+                max_var = CHAR_TABLES[root->children[i]->data].size();
+            }
+        }
+    }
+
+    void add_local_vars(Node* node, const std::string& func) {
+        if (node->type == TokenType::KEYWORD) {
+            if (keywords[node->data] == Keyword::DATA) {
+                for (auto& i : node->children) {
+                    CHAR_TABLES[func][i->data] = CHAR_TABLES[func].size();
+                }
+                return;
+            }
+        }
+        for (auto& i : node->children) {
+            add_local_vars(i, func);
         }
     }
 
     void name_validation_initial() {
-        if (!CHAR_TABLE.contains("main")) {
+        if (!CHAR_TABLES.contains("main")) {
             printf("No entry point!");
             return;
         }
         for (auto& i : root->children) {
-            if (i->data == "DATA") {
+            if (i->data == "data") {
                 continue;
             }
-            name_validation(i->children[1]);
+            name_validation(i->children[1], i->data);
         }
     }
 
-    void name_validation(Node* node) {
+    void name_validation(Node* node, const std::string& func) {
         if (node->type == TokenType::IDENTIFICATOR) {
-            if (!CHAR_TABLE.contains(node->data)) {
+            if (!CHAR_TABLES.contains(node->data) && !CHAR_TABLES[func].contains(node->data)) {
                 printf("FAIL no such name: %s\n", node->data.c_str());
                 // RAISE SEMANTIC ERROR
             }
         }
         for (auto& i : node->children) {
-            name_validation(i);
+            name_validation(i, func);
         }
     }
 
@@ -431,24 +479,31 @@ public:
         FILE* f = fopen(filename, "w");
         fprintf(f, "jmp main\n");
         for (auto& i : root->children) {
-            evaluate(i, f);
+            evaluate(i, f, i->data);
         }
+        fclose(f);
     }
 
-    void evaluate(Node* node, FILE* file) {
+    void evaluate(Node* node, FILE* file, const std::string& func) {
         if (node->type == TokenType::IDENTIFICATOR) {
             if (node->children.empty()) {
-                fprintf(file, "pushr r%d\n", CHAR_TABLE[node->data]);
+                fprintf(file, "pushr r%d\n", CHAR_TABLES[func][node->data]);
             }
             else {
                 if (node->data == "sqrt") {
-                    evaluate(node->children[0], file);
+                    evaluate(node->children[0], file, func);
                     fprintf(file, "sqrt\n");
                 } else {
+                    for (int i = global_var; i < max_var; ++i) {
+                        fprintf(file, "pushr r%d\n", i);
+                    }
+                    evaluate(node->children[0], file, func);
                     fprintf(file, "call %s\n", node->data.c_str());
-                    // TODO add arguments
+                    for (int i = max_var - 1; i >= global_var; --i) {
+                        fprintf(file, "popr r%d\n", i);
+                    }
+                    fprintf(file, "pushr r%zu\n", return_reg);
                 }
-
             }
         }
         else if (node->type == TokenType::INTEGER_LITERAL) {
@@ -456,8 +511,10 @@ public:
         }
         else if (node->type == TokenType::FUNCTION) {
             fprintf(file, "$%s\n", node->data.c_str());
-            // TODO add arguments
-            evaluate(node->children[1], file);
+            for (int i = node->children[0]->children.size() + global_var - 1; i >= global_var; --i) {
+                fprintf(file, "popr r%d\n", i);
+            }
+            evaluate(node->children[1], file, func);
             if (node->data == "main") {
                 fprintf(file, "end\n");
             } else {
@@ -467,11 +524,11 @@ public:
         }
         else if (node->type == TokenType::OPERATOR) {
             if (node->data == "=") {
-                evaluate(node->children[1], file);
-                fprintf(file, "popr r%d\n", CHAR_TABLE[node->children[0]->data]);
+                evaluate(node->children[1], file, func);
+                fprintf(file, "popr r%d\n", CHAR_TABLES[func][node->children[0]->data]);
             } else {
                 for (auto& j : node->children) {
-                    evaluate(j, file);
+                    evaluate(j, file, func);
                 }
                 if (node->data == "+") {
                     fprintf(file, "add\n");
@@ -500,19 +557,19 @@ public:
         }
         else if (node->data == "COMPOUND" || node->data == "STAT") {
             for (auto& j : node->children) {
-                evaluate(j, file);
+                evaluate(j, file, func);
             }
         }
         else if (node->data == "ARG") {
             for (auto& j : node->children) {
-                evaluate(j, file);
+                evaluate(j, file, func);
             }
             return;
         }
         else if (node->type == TokenType::KEYWORD) {
             if (node->data == "OUT") {
                 for (auto& i : node->children[0]->children) {
-                    evaluate(i, file);
+                    evaluate(i, file, func);
                     fprintf(file, "out\n"
                                   "pop\n");
                 }
@@ -520,33 +577,32 @@ public:
             else if (node->data == "IN") {
                 for (auto& i : node->children[0]->children) {
                     fprintf(file, "in\n"
-                                  "popr r%d\n", CHAR_TABLE[i->data]);
+                                  "popr r%d\n", CHAR_TABLES[func][i->data]);
                 }
             }
             else if (node->data == "IF") {
                 int cur_cnt = exp_cnt++;
-                evaluate(node->children[0], file);
+                evaluate(node->children[0], file, func);
                 fprintf(file, "push 0\n"
                               "cmptop\n"
                               "je notif%d\n", cur_cnt);
-                evaluate(node->children[1], file);
+                evaluate(node->children[1], file, func);
                 fprintf(file, "$notif%d\n", cur_cnt);
             }
             else if (node->data == "RETURN") {
-                evaluate(node->children[0], file);
+                evaluate(node->children[0], file, func);
+                fprintf(file, "popr r%d\n", return_reg);
                 fprintf(file, "ret\n");
             }
             else if (node->data == "WHILE") {
                 int cur_cnt = exp_cnt++;
                 int exit_cnt = exp_cnt++;
                 fprintf(file, "$while%d\n", cur_cnt);
-                evaluate(node->children[0], file);
-                fprintf(file, "popr r999\n"
-                              "push 0\n"
-                              "popr r1000\n"
-                              "cmp r999, r1000\n"
+                evaluate(node->children[0], file, func);
+                fprintf(file, "push 0\n"
+                              "cmptop\n"
                               "je notif%d\n", exit_cnt);
-                evaluate(node->children[1], file);
+                evaluate(node->children[1], file, func);
                 fprintf(file, "jmp while%d\n"
                               "$notif%d\n", cur_cnt, exit_cnt);
             }
@@ -666,7 +722,7 @@ void Parser::load_word(const char *&start, size_t &size, bool &status, int shift
 
 
 int main() {
-    std::ifstream t("quadratic.:)");
+    std::ifstream t("test2.:)");
     std::stringstream buffer;
     buffer << t.rdbuf();
     Parser parser(buffer.str());
