@@ -1,0 +1,12 @@
+jmp main
+$main
+in
+popr r0
+in
+popr r1
+pushr r0
+pushr r1
+add
+out
+pop
+end

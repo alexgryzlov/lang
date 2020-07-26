@@ -1,0 +1,52 @@
+jmp main
+$fib
+popr r0
+pushr r0
+push 0
+equal
+push 0
+cmptop
+je notif0
+push 0
+popr r101
+ret
+$notif0
+pushr r0
+push 1
+equal
+push 0
+cmptop
+je notif1
+push 1
+popr r101
+ret
+$notif1
+pushr r0
+pushr r0
+push 1
+sub
+call fib
+popr r0
+pushr r101
+pushr r0
+pushr r0
+push 2
+sub
+call fib
+popr r0
+pushr r101
+add
+popr r101
+ret
+ret
+$main
+in
+popr r0
+pushr r0
+pushr r0
+call fib
+popr r0
+pushr r101
+out
+pop
+end

@@ -1,0 +1,10 @@
+data a, b, c, d;
+main() {
+in a, b;
+a = a + b;
+b = b + a;
+if (a == 0) {
+out -42;
+}
+return 0;
+}
