@@ -1,7 +1,7 @@
 #ifndef LANG_REALASMTRANSLATOR_H
 #define LANG_REALASMTRANSLATOR_H
 
-#include "../common.h"
+#include "../Compiler/common.h"
 #include "OP.hpp"
 
 class RealASMTranslator {

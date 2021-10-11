@@ -1,5 +1,0 @@
-main() {
-    data a, b, c;
-    in a, b;
-    out a + b;
-}

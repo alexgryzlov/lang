@@ -1,0 +1,23 @@
+$main
+    in
+    call factorial
+    out
+    end
+
+$factorial
+    popr r0
+    push 1
+    popr r1
+    cmp r0 r1
+    je cornercase
+    pushr r0
+    pushr r0
+    push 1
+    sub
+    call factorial
+    mul
+    ret
+
+$cornercase
+    push 1
+    ret

@@ -1,1 +1,0 @@
-/usr/bin/c++  -g   CMakeFiles/lang.dir/main.cpp.o  -o lang 
