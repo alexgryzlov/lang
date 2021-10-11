@@ -1,1 +1,0 @@
-/usr/bin/c++  -g   CMakeFiles/xzyc.dir/main.cpp.o  -o xzyc 
